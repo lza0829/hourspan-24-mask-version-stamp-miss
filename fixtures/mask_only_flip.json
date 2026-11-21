@@ -1,0 +1,24 @@
+{
+  "snapshots": [
+    {
+      "id": "SNAP-MASK-WEST-01",
+      "store_id": "ST-WEST-01",
+      "as_of_ts": "2026-11-16T00:00:00Z",
+      "open_time": "08:30",
+      "close_time": "20:30",
+      "weekday_mask": "1111110",
+      "biz_status": "open",
+      "payload": {"reason": "周六加开，仅营业日位图变化"}
+    },
+    {
+      "id": "SNAP-MASK-NORTH-01",
+      "store_id": "ST-NORTH-01",
+      "as_of_ts": "2026-11-16T00:00:00Z",
+      "open_time": "09:00",
+      "close_time": "18:00",
+      "weekday_mask": "0111110",
+      "biz_status": "open",
+      "payload": {"reason": "周日改周一，仅营业日位图变化"}
+    }
+  ]
+}
