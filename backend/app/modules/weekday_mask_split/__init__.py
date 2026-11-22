@@ -14,12 +14,20 @@
 
 只读核证：mask_open_proof() 回出旧/新 mask、hist_id、三方 hash（检测 to_hash / 历史行 /
 当前镜）与规范 hash，供核证页调用；本函数只读不写。
+
+掩码日历世代钉扎（mask_version_stamp，口径甲：段上钉死位图快照为准）：
+  - 每次开新段（new / attr_change / mask_change）在同一事务钉 mask_calendar_epoch
+    （hist_id、epoch、七日位图快照、钉扎时刻）；钉扎失败整笔回滚，
+    禁止「开段成功而日历世代缺行」。
+  - 钉扎事务内读现行站规世代并当场钉死，新段 epoch 不会与开段时站规分叉；
+    站规热更只追加新世代，不回溯改写旧钉。
 """
 
 import json
 from uuid import uuid4
 
 from app.db import connect
+from app.modules import mask_version_stamp
 from app.seed import mask_changed_bits, now_iso, row_hash
 
 ATTR_FIELDS = ("open_time", "close_time", "weekday_mask", "biz_status")
@@ -318,6 +326,20 @@ def _check_single_current(conn, store_id: str):
         raise ApplyError("double_current", f"门店 {store_id} 已存在多条 is_current=1")
 
 
+def _pin_calendar_epoch(conn, hist_id: str, store_id: str, bitmap: str, detect_run_id: str):
+    """开段同事务钉日历世代；钉扎失败抛 ApplyError → 整笔回滚（同成败）。"""
+    try:
+        return mask_version_stamp.pin_segment(
+            conn,
+            hist_id=hist_id,
+            store_id=store_id,
+            bitmap=bitmap,
+            detect_run_id=detect_run_id,
+        )
+    except mask_version_stamp.StampError as exc:
+        raise ApplyError(exc.code, exc.message)
+
+
 def apply_run(detect_run_id: str):
     """开闭 + 当前镜 + 本检测成员写回，单事务原子提交；失败整体回滚。"""
     conn = connect()
@@ -366,6 +388,9 @@ def apply_run(detect_run_id: str):
                         f"{store_id} 已有现行有效段，检测报告已过期",
                     )
                 new_id = _insert_hist(conn, store_id, to, snap, detect_run_id)
+                pin = _pin_calendar_epoch(
+                    conn, new_id, store_id, to["weekday_mask"], detect_run_id
+                )
                 _upsert_mirror(conn, store_id, to, new_id, snap["as_of_ts"])
                 applied.append(
                     {
@@ -377,6 +402,7 @@ def apply_run(detect_run_id: str):
                         "new_mask": to["weekday_mask"],
                         "changed_bits": ch.get("changed_bits", ""),
                         "detect_to_hash": ch["to_hash"],
+                        "calendar_epoch": pin["epoch"],
                     }
                 )
                 continue
@@ -423,6 +449,9 @@ def apply_run(detect_run_id: str):
                 )
             _close_hist(conn, cur["id"], snap["as_of_ts"], detect_run_id)
             new_id = _insert_hist(conn, store_id, to, snap, detect_run_id)
+            pin = _pin_calendar_epoch(
+                conn, new_id, store_id, to["weekday_mask"], detect_run_id
+            )
             _upsert_mirror(conn, store_id, to, new_id, snap["as_of_ts"])
             applied.append(
                 {
@@ -436,6 +465,7 @@ def apply_run(detect_run_id: str):
                         cur["weekday_mask"], to["weekday_mask"]
                     ),
                     "detect_to_hash": ch["to_hash"],
+                    "calendar_epoch": pin["epoch"],
                 }
             )
 
@@ -498,16 +528,15 @@ def _verify_mask_change(conn, run, change):
     ).fetchone()
     # 新段以「本检测成员开出的那一段」为准（按其快照定位），而非只看当前有效段；
     # 这样即使之后又有新段把它顶掉，本跑次核证仍如实回出当次的旧/新 mask。
-    new = None
+    opened = None
     if snap:
-        new = conn.execute(
+        opened = conn.execute(
             """SELECT * FROM dim_store_hours_hist
                WHERE store_id=? AND source_snapshot_id=? AND valid_from=?
                ORDER BY rowid DESC LIMIT 1""",
             (store_id, snap["id"], snap["as_of_ts"]),
         ).fetchone()
-    if new is None:
-        new = effective_hist(conn, store_id)
+    new = opened if opened is not None else effective_hist(conn, store_id)
     mirror = conn.execute(
         "SELECT * FROM dim_store_hours_current WHERE store_id=?", (store_id,)
     ).fetchone()
@@ -594,6 +623,15 @@ def _verify_mask_change(conn, run, change):
     if not three_way_consistent:
         reasons.append("three_way_not_equal")
 
+    # 掩码日历世代钉扎核证（口径甲：段上钉死位图快照为准，只读 hist 绑定七日位图）。
+    # 只核「本跑次开出的段」；段未开出时由 detect_change_not_applied 等原因兜底。
+    epoch_reasons: list = []
+    pin = None
+    if opened is not None:
+        pin = mask_version_stamp.pin_of(conn, opened["id"])
+        epoch_reasons = mask_version_stamp.check_segment_pin(conn, opened, pin)
+        reasons.extend(epoch_reasons)
+
     return {
         "store_id": store_id,
         "detect_run_id": run["id"],
@@ -612,6 +650,11 @@ def _verify_mask_change(conn, run, change):
         "three_way_consistent": three_way_consistent,
         "hash_includes_mask": True,
         "hash_template": HASH_TEMPLATE,
+        "calendar_epoch": pin["epoch"] if pin else None,
+        "pinned_bitmap": pin["bitmap"] if pin else None,
+        "pinned_at": pin["pinned_at"] if pin else None,
+        "epoch_attest_valid": bool(opened is not None and pin and not epoch_reasons),
+        "epoch_reasons": epoch_reasons,
         "valid": not reasons,
         "reasons": _distinct(reasons),
     }
@@ -672,5 +715,15 @@ def mask_open_proof(store_id: str | None = None, detect_run_id: str | None = Non
 
 
 def mask_calendar_epoch_for(conn, hist_id: str) -> dict:
-    # 掩码开段主链可成；日历世代钉扎未落
-    return {"hist_id": hist_id, "epoch": None, "bitmap": None, "stamped": False}
+    """某历史段的掩码日历世代钉扎（只读）。缺钉时 stamped=False 显式暴露。"""
+    pin = mask_version_stamp.pin_of(conn, hist_id)
+    if not pin:
+        return {"hist_id": hist_id, "epoch": None, "bitmap": None, "stamped": False}
+    return {
+        "hist_id": hist_id,
+        "epoch": pin["epoch"],
+        "bitmap": pin["bitmap"],
+        "pinned_at": pin["pinned_at"],
+        "detect_run_id": pin["detect_run_id"],
+        "stamped": True,
+    }

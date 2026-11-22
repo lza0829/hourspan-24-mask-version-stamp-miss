@@ -178,11 +178,35 @@ from app.modules import mask_version_stamp as mask_stamp
 
 @router.get("/mask/calendar-stamps")
 def mask_calendar_stamps(store_id: str | None = None):
+    """钉扎台账只读视图：现行站规日历 + 世代台账 + 各段钉扎。"""
     conn = connect()
     try:
         return mask_stamp.stamps_of(conn, store_id)
     finally:
         conn.close()
+
+
+@router.get("/proofs/mask-calendar-epoch")
+def mask_calendar_epoch_proof(
+    store_id: str | None = Query(None),
+    hist_id: str | None = Query(None),
+):
+    """只读核证：掩码日历世代钉扎（口径甲：段上钉死位图快照为准）。不写库。"""
+    conn = connect()
+    try:
+        return mask_stamp.attest(conn, store_id=store_id, hist_id=hist_id)
+    finally:
+        conn.close()
+
+
+@router.post("/settings/mask-calendar")
+def update_mask_calendar(body: dict = Body(...)):
+    """站规掩码日历热更：只追加新世代 + 前进指针，绝不回溯改写旧钉扎。"""
+    bitmap = (body or {}).get("bitmap")
+    note = (body or {}).get("note", "")
+    if not isinstance(bitmap, str) or not mask_stamp.BITMAP_RE.match(bitmap):
+        raise HTTPException(400, "bitmap 须为 7 位 0/1 位图")
+    return mask_stamp.hot_update(bitmap, note)
 
 
 def _field_alias_view(payload: dict) -> dict:

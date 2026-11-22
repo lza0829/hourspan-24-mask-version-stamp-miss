@@ -37,3 +37,29 @@ npm run dev
 核证页：前端「mask 开段」（`/mask-split`）可一键入档夹具 → 检测 → 开段 → 核证。
 
 测试：`cd backend && python -m pytest tests -q`
+
+## 已实现（本分支）：`mask_version_stamp`
+
+掩码变化开段标成功时，同成败钉死「掩码日历世代」：开的是哪一版七日掩码表，段上可查；
+站规掩码表热更不回溯改写旧段，旧段不被按新表重解释。
+
+- 同事务钉扎：每次开新段（new / attr_change / mask_change）在同一事务写入
+  `mask_calendar_epoch_pins`（`hist_id`、`epoch`、七日位图快照、钉扎时刻、detect_run_id）；
+  钉扎失败整笔回滚——禁止开段成功而日历世代缺行。
+- 世代不分叉：钉扎在事务内读现行站规世代（`settings.mask_calendar_epoch` →
+  `mask_calendar_epochs` 台账）并当场钉死，新段 epoch 必与开段时站规一致。
+- 站规热更：`POST /api/settings/mask-calendar`（`{bitmap, note}`）只追加新世代行 +
+  前进指针，绝不 UPDATE 旧钉扎；同位图热更拒绝，非法位图 400。
+- 架构口径（全局唯一，取甲）：**以段上钉死位图快照为准**——核验只读 hist 绑定七日位图，
+  不按现行站规日历重算。对照口径（乙，未采用）：段上 epoch 仅审计、核验按现行表；
+  两口径只在「只改落存位图」时分叉——甲判 `pinned_bitmap_mismatch`，乙不动 valid。
+- 只读核证（新增）：`GET /api/proofs/mask-calendar-epoch?store_id=&hist_id=`，
+  回出每段钉扎（epoch / 钉扎位图 / 钉扎时刻）、现行世代、valid 与失败原因
+  （`epoch_pin_missing` / `pinned_bitmap_mismatch` / `epoch_unknown` / `pin_store_mismatch`）；
+  `GET /api/mask/calendar-stamps` 回出钉扎台账与世代台账。
+- 协同：mask 开段核证（`/api/proofs/mask-open`）每行附带 `calendar_epoch` /
+  `pinned_bitmap` / `epoch_attest_valid`，钉扎缺失或被篡改同样判失败；
+  核证页、mask 开段页、站规页均展示世代钉扎。
+- 夹具链路：`mask_only_flip.json` 开段后核位图钉死 → 站规热更后旧钉不漂 →
+  只改落存位图，两架构 valid 可区分（见 `tests/test_mask_calendar_epoch.py`）。
+

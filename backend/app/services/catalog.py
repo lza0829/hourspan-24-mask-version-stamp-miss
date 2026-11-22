@@ -13,6 +13,7 @@ def overview(conn):
         "入档批": conn.execute("SELECT COUNT(*) AS c FROM ingest_batches").fetchone()["c"],
         "检测跑次": conn.execute("SELECT COUNT(*) AS c FROM detect_runs").fetchone()["c"],
         "核证条": conn.execute("SELECT COUNT(*) AS c FROM scd_proofs").fetchone()["c"],
+        "日历钉扎": conn.execute("SELECT COUNT(*) AS c FROM mask_calendar_epoch_pins").fetchone()["c"],
         "搁置": conn.execute("SELECT COUNT(*) AS c FROM quarantine").fetchone()["c"],
     }
 

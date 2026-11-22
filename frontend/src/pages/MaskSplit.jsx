@@ -67,7 +67,8 @@ export default function MaskSplit() {
           <h1>mask 开段</h1>
           <p>
             weekday_mask 任一 bit 变化即属性变更：必须关旧开新。核证回出旧/新 mask、hist_id、
-            检测 to_hash / 历史行 hash / 当前镜 hash 三方同值。
+            检测 to_hash / 历史行 hash / 当前镜 hash 三方同值；开段同事务钉死掩码日历世代
+            （epoch + 七日位图快照），站规热更不回溯改写旧钉。
           </p>
         </div>
       </div>
@@ -101,6 +102,7 @@ export default function MaskSplit() {
               <th>门店</th><th>旧 mask</th><th>新 mask</th><th>翻转位</th>
               <th>old_hist</th><th>new hist_id</th>
               <th>detect to_hash</th><th>hist hash</th><th>mirror hash</th>
+              <th>日历世代</th><th>钉扎位图</th>
               <th>三方一致</th><th>valid</th><th>reasons</th>
             </tr>
           </thead>
@@ -116,6 +118,10 @@ export default function MaskSplit() {
                 <td className="mono">{r.detect_to_hash}</td>
                 <td className="mono">{r.hist_row_hash || "—"}</td>
                 <td className="mono">{r.mirror_row_hash || "—"}</td>
+                <td className="mono">
+                  {r.calendar_epoch != null ? `epoch ${r.calendar_epoch}` : "—"}
+                </td>
+                <td className="mono">{r.pinned_bitmap || "—"}</td>
                 <td>
                   <span className={`badge ${r.three_way_consistent ? "ok" : "bad"}`}>
                     {r.three_way_consistent ? "一致" : "不一致"}
@@ -130,7 +136,7 @@ export default function MaskSplit() {
               </tr>
             ))}
             {rows.length === 0 && (
-              <tr><td colSpan={12} className="muted">暂无 mask 变更跑次；先入档 mask 夹具再核证。</td></tr>
+              <tr><td colSpan={14} className="muted">暂无 mask 变更跑次；先入档 mask 夹具再核证。</td></tr>
             )}
           </tbody>
         </table>

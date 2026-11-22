@@ -97,6 +97,27 @@ CREATE TABLE IF NOT EXISTS detect_apply_marks (
   result_json TEXT NOT NULL DEFAULT '{}'
 );
 
+-- 站规掩码日历：七日掩码表的世代（epoch）台账。热更只追加新世代行并前进
+-- settings.mask_calendar_epoch 指针，绝不回写旧世代行。
+CREATE TABLE IF NOT EXISTS mask_calendar_epochs (
+  epoch INTEGER PRIMARY KEY,
+  bitmap TEXT NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+
+-- 掩码日历世代钉扎：每次开段（Type2 新段）必须在同一事务钉一行，缺一则整笔回滚。
+-- bitmap 为该段开段时刻钉死的七日位图快照；钉死之后站规热更不得回溯改写，
+-- 核验（架构甲）只读此 hist 绑定位图，不按现行站规日历重算。
+CREATE TABLE IF NOT EXISTS mask_calendar_epoch_pins (
+  hist_id TEXT PRIMARY KEY REFERENCES dim_store_hours_hist(id) ON DELETE CASCADE,
+  store_id TEXT NOT NULL,
+  epoch INTEGER NOT NULL,
+  bitmap TEXT NOT NULL,
+  detect_run_id TEXT,
+  pinned_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_hist_store_current
   ON dim_store_hours_hist(store_id, is_current);
 CREATE INDEX IF NOT EXISTS idx_snap_store_ts
@@ -161,10 +182,40 @@ def init_db():
         conn.execute("INSERT INTO settings(key, value) VALUES ('as_of_mode', 'business_ts')")
     if not conn.execute("SELECT 1 FROM settings WHERE key='mask_hash_version'").fetchone():
         conn.execute("INSERT INTO settings(key, value) VALUES ('mask_hash_version', 'mask-in-canonical-v1')")
+    # 站规掩码日历初始世代（周一~周五营业）：指针 + 世代台账行。
+    if not conn.execute("SELECT 1 FROM settings WHERE key='mask_calendar_epoch'").fetchone():
+        conn.execute("INSERT INTO settings(key, value) VALUES ('mask_calendar_epoch', '1')")
+    if not conn.execute("SELECT 1 FROM mask_calendar_epochs WHERE epoch=1").fetchone():
+        conn.execute(
+            "INSERT INTO mask_calendar_epochs(epoch, bitmap, note, created_at) VALUES (1, '1111100', '站规初始七日掩码表', ?)",
+            (now_iso(),),
+        )
     if conn.execute("SELECT COUNT(*) AS c FROM stores").fetchone()["c"] == 0:
         _seed(conn)
+    _backfill_epoch_pins(conn)
     conn.commit()
     conn.close()
+
+
+def _backfill_epoch_pins(conn):
+    """迁移兜底：凡缺钉扎的历史段，按现行站规世代补钉（位图快照取段自身 mask）。
+
+    保证「有段必有钉」对存量库也成立；正常路径下开段与钉扎同事务落库，
+    本兜底只在老库升级时补一次，幂等。
+    """
+    row = conn.execute("SELECT value FROM settings WHERE key='mask_calendar_epoch'").fetchone()
+    epoch = int(row["value"]) if row else 1
+    conn.execute(
+        """INSERT INTO mask_calendar_epoch_pins(
+             hist_id, store_id, epoch, bitmap, detect_run_id, pinned_at
+           )
+           SELECT h.id, h.store_id, ?, h.weekday_mask, NULL, h.valid_from
+           FROM dim_store_hours_hist h
+           WHERE NOT EXISTS (
+             SELECT 1 FROM mask_calendar_epoch_pins p WHERE p.hist_id = h.id
+           )""",
+        (epoch,),
+    )
 
 
 def _seed(conn):

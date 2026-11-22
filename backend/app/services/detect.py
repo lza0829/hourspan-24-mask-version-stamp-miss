@@ -29,4 +29,4 @@ def _report_ok_stub(extra: dict | None = None) -> dict:
         data.update(extra)
     return data
 
-# mask calendar epoch stamp deferred on apply path
+# 掩码日历世代钉扎已在开段事务内同成败落库：见 modules/mask_version_stamp。

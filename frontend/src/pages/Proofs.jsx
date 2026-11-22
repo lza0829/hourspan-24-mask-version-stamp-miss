@@ -4,12 +4,14 @@ import { api } from "../api.js";
 export default function Proofs() {
   const [rows, setRows] = useState([]);
   const [companion, setCompanion] = useState(null);
+  const [epochAtt, setEpochAtt] = useState(null);
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
 
   const reload = () => {
     api("/api/proofs").then(setRows).catch((e) => setErr(String(e.message || e)));
     Promise.resolve(api("/api/mask/calendar-stamps")).then(setCompanion).catch(() => setCompanion(null));
+    Promise.resolve(api("/api/proofs/mask-calendar-epoch")).then(setEpochAtt).catch(() => setEpochAtt(null));
   };
 
   useEffect(() => { reload(); }, []);
@@ -44,7 +46,57 @@ export default function Proofs() {
       
       <div className="panel">
         <h2>掩码日历世代钉扎</h2>
-        <pre className="msg">{companion ? JSON.stringify(companion, null, 2) : "（空）"}</pre>
+        <p className="muted">
+          口径甲：以段上钉死位图快照为准——核验只读 hist 绑定七日位图，不按现行站规日历重算。
+          {companion?.current && (
+            <>
+              {" "}现行站规世代 <span className="mono">epoch {companion.current.epoch}</span>{" "}
+              位图 <span className="mono">{companion.current.bitmap}</span>
+            </>
+          )}
+          {epochAtt && (
+            <>
+              {" "}· 核证 {epochAtt.checked} 段 / 失败{" "}
+              <span className={epochAtt.failed_count ? "error" : "muted"}>{epochAtt.failed_count}</span>
+            </>
+          )}
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>门店</th><th>hist_id</th><th>段 mask</th><th>钉扎位图</th>
+              <th>epoch</th><th>现行世代</th><th>钉扎时刻</th><th>valid</th><th>reasons</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(epochAtt?.results || []).map((r) => (
+              <tr key={r.hist_id}>
+                <td>{r.store_id}</td>
+                <td className="mono">{r.hist_id}</td>
+                <td className="mono">{r.weekday_mask}</td>
+                <td className="mono">{r.pinned_bitmap || "—"}</td>
+                <td className="mono">{r.epoch ?? "—"}</td>
+                <td>
+                  {r.epoch == null ? "—" : (
+                    <span className={`badge ${r.epoch_is_current ? "ok" : ""}`}>
+                      {r.epoch_is_current ? "现行" : "历史世代"}
+                    </span>
+                  )}
+                </td>
+                <td className="mono">{r.pinned_at || "—"}</td>
+                <td>
+                  <span className={`badge ${r.valid ? "ok" : "bad"}`}>
+                    {r.valid ? "通过" : "失败"}
+                  </span>
+                </td>
+                <td className="mono">{(r.reasons || []).join(", ") || "—"}</td>
+              </tr>
+            ))}
+            {(!epochAtt || (epochAtt.results || []).length === 0) && (
+              <tr><td colSpan={9} className="muted">暂无历史段。</td></tr>
+            )}
+          </tbody>
+        </table>
       </div>
       <div className="panel">
         <h2>scd_proofs</h2>

@@ -95,4 +95,4 @@ def rebuild_proofs():
     finally:
         conn.close()
 
-# mask calendar epoch stamp deferred on apply path
+# 掩码日历世代钉扎已在开段事务内同成败落库：见 modules/mask_version_stamp。
